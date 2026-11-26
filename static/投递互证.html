@@ -29,10 +29,11 @@
     </header>
 
 <section class="卷">
+  <p class="说明">抖动对账：越界影子（原始抖动越界却标成界内合法）与点火队列出界均判不平。</p>
   <button class="按钮" type="button" id="跑">跑互证</button>
   <pre id="出" class="说明"></pre>
 </section>
-<section class="卷"><div class="表绕"><table><thead><tr><th>批次号</th><th>时刻</th><th>事件总数</th><th>已投递</th><th>死信</th><th>待投</th><th>对齐</th><th>说明</th></tr></thead><tbody id="表"></tbody></table></div></section>
+<section class="卷"><div class="表绕"><table><thead><tr><th>批次号</th><th>时刻</th><th>事件总数</th><th>已投递</th><th>死信</th><th>待投</th><th>对齐</th><th>抖动对齐</th><th>越界影子</th><th>说明</th></tr></thead><tbody id="表"></tbody></table></div></section>
 
   </main>
 
@@ -41,7 +42,7 @@ async function 刷表() {
   const rows = await 投递台.getJSON('/api/互证');
   const tb = document.getElementById('表'); tb.innerHTML='';
   for (const r of rows) {
-    tb.appendChild(投递台.行('<td>'+r.批次号+'</td><td>'+投递台.安全文本(r.时刻)+'</td><td>'+r.事件总数+'</td><td>'+r.已投递数+'</td><td>'+r.死信数+'</td><td>'+r.待投数+'</td><td>'+(r.是否对齐?'是':'否')+'</td><td>'+投递台.安全文本(r.说明)+'</td>'));
+    tb.appendChild(投递台.行('<td>'+r.批次号+'</td><td>'+投递台.安全文本(r.时刻)+'</td><td>'+r.事件总数+'</td><td>'+r.已投递数+'</td><td>'+r.死信数+'</td><td>'+r.待投数+'</td><td>'+(r.是否对齐?'是':'否')+'</td><td>'+(r.抖动对齐?'是':'否')+'</td><td>'+投递台.安全文本(r.越界影子数)+'</td><td>'+投递台.安全文本(r.说明)+'</td>'));
   }
 }
 document.getElementById('跑').onclick = async () => {

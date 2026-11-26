@@ -1,6 +1,29 @@
 from __future__ import annotations
 from app.db import 连接
-from app.services import 校验
+from app.services import 校验, 抖动
+
+
+def _重试详情(conn, 事件号: str, 死信行) -> dict:
+    """重试策略连带的等待详情：上下界与本次实际等待。"""
+    界 = 抖动.取界()
+    排 = conn.execute("SELECT * FROM 重试排程 WHERE 事件号=?", (事件号,)).fetchone()
+    下 = int(排["下界毫秒"]) if 排 else 界["下界毫秒"]
+    上 = int(排["上界毫秒"]) if 排 else 界["上界毫秒"]
+    原始 = int(排["原始抖动毫秒"]) if 排 else 0
+    等待 = int(排["等待毫秒"]) if 排 else 下
+    if 死信行 and int(死信行["实际等待毫秒"] or 0) > 0:
+        下 = int(死信行["抖动下界毫秒"] or 下)
+        上 = int(死信行["抖动上界毫秒"] or 上)
+        等待 = int(死信行["实际等待毫秒"])
+    return {
+        "下界毫秒": 下,
+        "上界毫秒": 上,
+        "原始抖动毫秒": 原始,
+        "实际等待毫秒": 等待,
+        "是否钳住": bool(等待 != 原始) if 排 else False,
+        "是否界内": bool(下 <= 等待 <= 上),
+        "文案": 抖动.文案(等待 != 原始 if 排 else False, 等待, 下, 上, 原始),
+    }
 
 
 def 签名规() -> dict:
@@ -43,6 +66,8 @@ def 概览() -> dict:
             "死信": c("SELECT COUNT(*) FROM 事件 WHERE 状态='死信'"),
             "尝试数": c("SELECT COUNT(*) FROM 投递尝试"),
             "死信匣": c("SELECT COUNT(*) FROM 死信 WHERE 状态='待处置'"),
+            "抖动下界毫秒": 抖动.取界()["下界毫秒"],
+            "抖动上界毫秒": 抖动.取界()["上界毫秒"],
             "签名规": 签名规(),
         }
     finally:
@@ -69,6 +94,8 @@ def 事件一条(事件号: str) -> dict | None:
         ).fetchall()]
         dl = conn.execute("SELECT * FROM 死信 WHERE 事件号=?", (事件号,)).fetchone()
         d["死信"] = dict(dl) if dl else None
+        # 重试等待详情：上下界与实际等待，界内/越界已钳住
+        d["重试详情"] = _重试详情(conn, 事件号, d["死信"])
         return d
     finally:
         conn.close()

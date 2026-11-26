@@ -4,7 +4,7 @@ import hmac
 import uuid
 from app.db import 连接
 from app.services.时间 import 此刻
-from app.services import 签名目录
+from app.services import 签名目录, 抖动
 
 
 def _签名(密钥版本: str, 事件号: str, 摘要: str) -> str:
@@ -55,21 +55,41 @@ def 投递一次(事件号: str, 强制失败: bool = False) -> dict:
             (尝试号, 事件号, ev["端点键"], sig, "失败", 500, "投递失败", t),
         )
         新失败 = 失败次数 + 1
+        排 = conn.execute("SELECT * FROM 重试排程 WHERE 事件号=?", (事件号,)).fetchone()
+        if 排:
+            下界, 上界 = int(排["下界毫秒"]), int(排["上界毫秒"])
+            实际等待, _ = 抖动.钳(int(排["原始抖动毫秒"]), 下界, 上界)
+        else:
+            界 = 抖动.取界()
+            下界, 上界 = 界["下界毫秒"], 界["上界毫秒"]
+            实际等待, _ = 抖动.钳(下界, 下界, 上界)
         if 新失败 >= 最大:
             dl = f"DL-{uuid.uuid4().hex[:10]}"
             if not conn.execute("SELECT 1 FROM 死信 WHERE 事件号=?", (事件号,)).fetchone():
                 conn.execute(
-                    "INSERT INTO 死信(死信号,事件号,端点键,失败次数,末次原因,状态,入匣时) VALUES (?,?,?,?,?,?,?)",
-                    (dl, 事件号, ev["端点键"], 新失败, "重试耗尽", "待处置", t),
+                    "INSERT INTO 死信(死信号,事件号,端点键,失败次数,末次原因,状态,入匣时,"
+                    "抖动下界毫秒,抖动上界毫秒,实际等待毫秒) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (dl, 事件号, ev["端点键"], 新失败, "重试耗尽", "待处置", t,
+                     下界, 上界, 实际等待),
                 )
             conn.execute("UPDATE 事件 SET 状态=?, 更新时=? WHERE 事件号=?", ("死信", t, 事件号))
             事件状态 = "死信"
         else:
+            # 还有重试机会：把这一条重新置为待排，供下一路调度认领点火时刻
+            if 排:
+                原抖动 = int(排["原始抖动毫秒"])
+                conn.execute(
+                    "UPDATE 重试排程 SET 状态='待排', 原始抖动毫秒=?, 等待毫秒=?, 是否钳住=? "
+                    "WHERE 事件号=?",
+                    (原抖动, 实际等待, 1 if 实际等待 != 原抖动 else 0, 事件号),
+                )
             conn.execute("UPDATE 事件 SET 状态=?, 更新时=? WHERE 事件号=?", ("投递中", t, 事件号))
             事件状态 = "投递中"
         conn.execute("INSERT INTO 操作留痕(时刻,操作,事件号,详情) VALUES (?,?,?,?)",
                      (t, "投递失败", 事件号, f"失败{新失败}/{最大}"))
         conn.commit()
-        return {"尝试号": 尝试号, "状态": "失败", "事件状态": 事件状态, "失败次数": 新失败, "签名摘要": sig}
+        return {"尝试号": 尝试号, "状态": "失败", "事件状态": 事件状态, "失败次数": 新失败,
+                "抖动下界毫秒": 下界, "抖动上界毫秒": 上界, "实际等待毫秒": 实际等待,
+                "签名摘要": sig}
     finally:
         conn.close()

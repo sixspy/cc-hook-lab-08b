@@ -31,6 +31,7 @@
 <section class="卷">
   <label>事件号</label><input id="事件号"/>
   <button class="按钮" type="button" id="查">查询</button>
+  <p class="消息" id="等待消息"></p>
   <pre id="出" class="说明"></pre>
 </section>
 
@@ -40,7 +41,12 @@
 document.getElementById('查').onclick = async () => {
   try {
     const id = document.getElementById('事件号').value;
-    document.getElementById('出').textContent = JSON.stringify(await 投递台.getJSON('/api/事件/'+encodeURIComponent(id)), null, 2);
+    const out = await 投递台.getJSON('/api/事件/'+encodeURIComponent(id));
+    document.getElementById('出').textContent = JSON.stringify(out, null, 2);
+    const 详 = out.重试详情 || {};
+    document.getElementById('等待消息').textContent = 详.文案
+      ? ('等待详情：' + 详.文案 + '（实际等待 ' + 详.实际等待毫秒 + 'ms）')
+      : '';
   } catch (e) { document.getElementById('出').textContent = e.message; }
 };
 </script>

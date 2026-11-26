@@ -4,7 +4,7 @@ from pathlib import Path
 from flask import Flask, jsonify, redirect, request, send_from_directory
 
 from app import seed
-from app.services import 会话, 入队, 投递, 死信, 重试, 互证, 端点, 夹具, 说明, 签名目录
+from app.services import 会话, 入队, 投递, 死信, 重试, 互证, 端点, 夹具, 说明, 签名目录, 抖动
 
 _STATIC = Path(__file__).resolve().parent / "static"
 
@@ -66,7 +66,17 @@ def create_app() -> Flask:
     def api_签名规_post():
         body = request.get_json(force=True, silent=True) or {}
         try:
-            return jsonify(签名目录.改签名规(body))
+            # 抖动界校验：保存前先定界，越界样本下一次等待立刻按新界钳住
+            if "抖动下界毫秒" in body or "抖动上界毫秒" in body:
+                界 = 抖动.取界()
+                下 = body.get("抖动下界毫秒", 界["下界毫秒"])
+                上 = body.get("抖动上界毫秒", 界["上界毫秒"])
+                抖动.定界(下, 上)
+                body = {k: v for k, v in body.items()
+                        if k not in ("抖动下界毫秒", "抖动上界毫秒")}
+            out = 签名目录.改签名规(body) if body else 签名目录.签名规()
+            out["抖动界"] = 抖动.取界()
+            return jsonify(out)
         except ValueError as e:
             return jsonify({"错误": str(e)}), 400
 
@@ -105,9 +115,57 @@ def create_app() -> Flask:
     def api_批量重试():
         return jsonify(重试.批量重试待投())
 
+    @app.get("/api/抖动界")
+    def api_抖动界():
+        return jsonify(抖动.取界())
+
+    @app.get("/api/抖动账册")
+    def api_抖动账册():
+        return jsonify({"界": 抖动.取界(), "账册": 抖动.账册列表()})
+
+    @app.post("/api/抖动试算")
+    def api_抖动试算():
+        body = request.get_json(force=True, silent=True) or {}
+        try:
+            return jsonify(抖动.试算(body.get("抖动毫秒")))
+        except ValueError as e:
+            return jsonify({"错误": str(e)}), 400
+
+    @app.get("/api/重试排程")
+    def api_重试排程():
+        return jsonify({"界": 抖动.取界(), "排程": 重试.排程列表()})
+
+    @app.post("/api/重试排程")
+    def api_重试排程_post():
+        body = request.get_json(force=True, silent=True) or {}
+        try:
+            事件号 = str(body["事件号"])
+            if "抖动毫秒" in body:
+                return jsonify(重试.排程重试(
+                    事件号, body["抖动毫秒"], str(body.get("调度方") or "")
+                ))
+            return jsonify(重试.建待排(事件号))
+        except KeyError:
+            return jsonify({"错误": "缺事件号"}), 400
+        except ValueError as e:
+            return jsonify({"错误": str(e)}), 400
+        except 重试.排程争用 as e:
+            return jsonify({"错误": str(e), "争用": True}), 409
+
     @app.get("/api/死信")
     def api_死信():
-        return jsonify(签名目录.死信列表())
+        rows = 签名目录.死信列表()
+        # 死信列表要看见上下界和实际等待
+        for r in rows:
+            if not r.get("抖动下界毫秒") and not r.get("抖动上界毫秒"):
+                界 = 抖动.取界()
+                r["抖动下界毫秒"] = 界["下界毫秒"]
+                r["抖动上界毫秒"] = 界["上界毫秒"]
+            r["界内"] = bool(
+                (r.get("实际等待毫秒") or 0) == 0 or
+                r["抖动下界毫秒"] <= (r.get("实际等待毫秒") or 0) <= r["抖动上界毫秒"]
+            )
+        return jsonify(rows)
 
     @app.post("/api/死信/重投")
     def api_死信重投():

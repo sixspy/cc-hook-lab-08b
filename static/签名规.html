@@ -34,6 +34,24 @@
   <p class="消息" id="消息"></p>
   <button class="按钮" type="button" id="保存">保存签名规</button>
 </section>
+
+<section class="卷">
+  <h2 style="margin-top:0;font-size:1.05rem;color:var(--靛)">重试抖动界</h2>
+  <label>抖动下界（毫秒）</label><input id="抖动下界" type="number" min="0" value="800"/>
+  <label>抖动上界（毫秒）</label><input id="抖动上界" type="number" min="0" value="3000"/>
+  <label>抖动样本（毫秒，可负，用于看本次钳后等待）</label><input id="抖动样本" type="number" value="-50"/>
+  <p class="消息" id="抖动消息"></p>
+  <button class="按钮" type="button" id="存抖动界">保存抖动界</button>
+  <button class="按钮 次" type="button" id="试样本">试算本次等待</button>
+  <pre id="抖动出" class="说明"></pre>
+</section>
+
+<section class="卷">
+  <h2 style="margin-top:0;font-size:1.05rem;color:var(--靛)">抖动账册（旁路）</h2>
+  <p class="说明">越界样本收进旁路账册，处置为「拒绝回刷」；点火队列只收钳后等待。</p>
+  <pre id="账册" class="说明"></pre>
+</section>
+
 <section class="卷"><pre id="规" class="说明"></pre></section>
 
   </main>
@@ -51,7 +69,51 @@ document.getElementById('保存').onclick = async () => {
     await 刷();
   } catch (e) { document.getElementById('消息').textContent = e.message; }
 };
-刷();
+
+async function 刷抖动() {
+  const d = await 投递台.getJSON('/api/抖动界');
+  document.getElementById('抖动下界').value = d.下界毫秒;
+  document.getElementById('抖动上界').value = d.上界毫秒;
+  const a = await 投递台.getJSON('/api/抖动账册');
+  const 账 = a.账册 || [];
+  const tb = document.getElementById('账册');
+  tb.innerHTML = '';
+  if (!账.length) { tb.textContent = '账册为空'; return; }
+  const 表 = document.createElement('table');
+  表.innerHTML = '<thead><tr><th>事件号</th><th>调度方</th><th>原始抖动</th><th>钳后等待</th><th>界</th><th>处置</th></tr></thead>';
+  const body = document.createElement('tbody');
+  for (const r of 账.slice(0, 20)) {
+    const tr = 投递台.行(
+      '<td>'+投递台.安全文本(r.事件号)+'</td><td>'+投递台.安全文本(r.调度方)+'</td><td>'+投递台.安全文本(r.原始抖动毫秒)+'ms</td><td>'+投递台.安全文本(r.钳后等待毫秒)+'ms</td><td>'+投递台.安全文本(r.下界毫秒+'-'+r.上界毫秒)+'ms</td><td>'+投递台.安全文本(r.处置)+'</td>'
+    );
+    body.appendChild(tr);
+  }
+  表.appendChild(body);
+  tb.appendChild(表);
+}
+
+document.getElementById('存抖动界').onclick = async () => {
+  const 消息 = document.getElementById('抖动消息');
+  try {
+    const 下 = Number(document.getElementById('抖动下界').value);
+    const 上 = Number(document.getElementById('抖动上界').value);
+    const out = await 投递台.postJSON('/api/签名规', {抖动下界毫秒: 下, 抖动上界毫秒: 上});
+    消息.textContent = '已保存抖动界 '+out.抖动界.下界毫秒+'-'+out.抖动界.上界毫秒+'ms；下一次等待将落在界内';
+    await 刷(); await 刷抖动();
+  } catch (e) { 消息.textContent = e.message; }
+};
+
+document.getElementById('试样本').onclick = async () => {
+  const 消息 = document.getElementById('抖动消息');
+  try {
+    const 样本 = Number(document.getElementById('抖动样本').value);
+    const out = await 投递台.postJSON('/api/抖动试算', {抖动毫秒: 样本});
+    document.getElementById('抖动出').textContent = JSON.stringify(out, null, 2);
+    消息.textContent = (out.是否钳住 ? '抖动越界已钳住' : '等待落在界内') + '：本次钳住后 '+out.等待毫秒+'ms';
+  } catch (e) { 消息.textContent = e.message; }
+};
+
+(async () => { await 刷(); await 刷抖动(); })();
 </script>
 
 </body>

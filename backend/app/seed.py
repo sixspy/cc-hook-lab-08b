@@ -49,6 +49,9 @@ CREATE TABLE IF NOT EXISTS 死信 (
   末次原因 TEXT NOT NULL DEFAULT '',
   状态 TEXT NOT NULL DEFAULT '待处置',
   入匣时 TEXT NOT NULL,
+  抖动下界毫秒 INTEGER NOT NULL DEFAULT 0,
+  抖动上界毫秒 INTEGER NOT NULL DEFAULT 0,
+  实际等待毫秒 INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (事件号) REFERENCES 事件(事件号)
 );
 CREATE TABLE IF NOT EXISTS 互证批次 (
@@ -59,7 +62,35 @@ CREATE TABLE IF NOT EXISTS 互证批次 (
   死信数 INTEGER NOT NULL,
   待投数 INTEGER NOT NULL,
   是否对齐 INTEGER NOT NULL,
-  说明 TEXT NOT NULL
+  说明 TEXT NOT NULL,
+  抖动对齐 INTEGER NOT NULL DEFAULT 0,
+  越界影子数 INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS 重试排程 (
+  事件号 TEXT PRIMARY KEY,
+  调度方 TEXT NOT NULL DEFAULT '',
+  排程版本 INTEGER NOT NULL DEFAULT 0,
+  状态 TEXT NOT NULL DEFAULT '待排',
+  下界毫秒 INTEGER NOT NULL DEFAULT 800,
+  上界毫秒 INTEGER NOT NULL DEFAULT 3000,
+  原始抖动毫秒 INTEGER NOT NULL DEFAULT 0,
+  等待毫秒 INTEGER NOT NULL DEFAULT 800,
+  是否钳住 INTEGER NOT NULL DEFAULT 0,
+  下次点火毫秒 INTEGER NOT NULL DEFAULT 0,
+  排程时 TEXT NOT NULL DEFAULT '',
+  FOREIGN KEY (事件号) REFERENCES 事件(事件号)
+);
+CREATE TABLE IF NOT EXISTS 抖动账册 (
+  编号 INTEGER PRIMARY KEY AUTOINCREMENT,
+  事件号 TEXT NOT NULL DEFAULT '',
+  调度方 TEXT NOT NULL DEFAULT '',
+  下界毫秒 INTEGER NOT NULL,
+  上界毫秒 INTEGER NOT NULL,
+  原始抖动毫秒 INTEGER NOT NULL,
+  钳后等待毫秒 INTEGER NOT NULL,
+  是否越界 INTEGER NOT NULL DEFAULT 0,
+  处置 TEXT NOT NULL DEFAULT '采纳',
+  时刻 TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS 操作留痕 (
   编号 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,9 +106,26 @@ def 此刻() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _补列(conn, 表: str, 列定义: list[tuple[str, str]]) -> None:
+    """旧库升级：CREATE TABLE IF NOT EXISTS 不会给既有表补列，这里逐列补齐。"""
+    已有 = {r["name"] for r in conn.execute(f"PRAGMA table_info({表})").fetchall()}
+    for 列名, 定义 in 列定义:
+        if 列名 not in 已有:
+            conn.execute(f"ALTER TABLE {表} ADD COLUMN {列名} {定义}")
+
+
 def 初始化库() -> None:
     conn = 连接()
     conn.executescript(建表)
+    _补列(conn, "死信", [
+        ("抖动下界毫秒", "INTEGER NOT NULL DEFAULT 0"),
+        ("抖动上界毫秒", "INTEGER NOT NULL DEFAULT 0"),
+        ("实际等待毫秒", "INTEGER NOT NULL DEFAULT 0"),
+    ])
+    _补列(conn, "互证批次", [
+        ("抖动对齐", "INTEGER NOT NULL DEFAULT 0"),
+        ("越界影子数", "INTEGER NOT NULL DEFAULT 0"),
+    ])
     if conn.execute("SELECT COUNT(*) AS c FROM 用户").fetchone()["c"] == 0:
         conn.execute("INSERT INTO 用户(账号,密码哈希,角色) VALUES (?,?,?)", ("admin", "123456", "管理员"))
     if conn.execute("SELECT COUNT(*) AS c FROM 签名规").fetchone()["c"] == 0:
@@ -87,6 +135,8 @@ def 初始化库() -> None:
             "主链": "端点登记→事件入队→签名投递→失败重试与死信→投递账互证",
             "签名算法": "HMAC-SHA256",
             "超时秒": "5",
+            "抖动下界毫秒": "800",
+            "抖动上界毫秒": "3000",
         }.items():
             conn.execute("INSERT INTO 签名规(键,值) VALUES (?,?)", (k, v))
     if conn.execute("SELECT COUNT(*) AS c FROM 投递端点").fetchone()["c"] == 0:

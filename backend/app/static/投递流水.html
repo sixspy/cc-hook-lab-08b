@@ -31,11 +31,18 @@
 <section class="卷">
   <label>事件号</label><input id="事件号" placeholder="EVT-..."/>
   <label><input type="checkbox" id="强制失败"/> 强制失败（测死信）</label>
+  <label>抖动样本（毫秒，可负）</label><input id="抖动样本" type="number" value="-50"/>
+  <label>调度方</label><input id="调度方" value="甲"/>
   <p class="消息" id="消息"></p>
   <button class="按钮" type="button" id="投递钮">签名投递一次</button>
+  <button class="按钮 次" type="button" id="排程钮">排程下次点火</button>
   <button class="按钮 次" type="button" id="批量钮">批量重试待投</button>
 </section>
 <section class="卷"><div class="表绕"><table><thead><tr><th>尝试号</th><th>事件号</th><th>端点键</th><th>签名摘要</th><th>状态</th><th>响应码</th></tr></thead><tbody id="表"></tbody></table></div></section>
+<section class="卷">
+  <h2 style="margin-top:0;font-size:1.05rem;color:var(--靛)">点火队列（只收钳后等待）</h2>
+  <div class="表绕"><table><thead><tr><th>事件号</th><th>调度方</th><th>状态</th><th>原始抖动</th><th>等待</th><th>界</th><th>钳住</th><th>排程版本</th></tr></thead><tbody id="排程表"></tbody></table></div>
+</section>
 
   </main>
 
@@ -62,9 +69,33 @@ document.getElementById('投递钮').onclick = async () => {
 document.getElementById('批量钮').onclick = async () => {
   const rep = await 投递台.postJSON('/api/投递/批量重试', {});
   document.getElementById('消息').textContent = '批量 '+rep.条数;
-  await 刷表();
+  await 刷表(); await 刷排程();
 };
-刷表();
+
+document.getElementById('排程钮').onclick = async () => {
+  const 消息 = document.getElementById('消息');
+  try {
+    const out = await 投递台.postJSON('/api/重试排程', {
+      事件号: document.getElementById('事件号').value,
+      抖动毫秒: Number(document.getElementById('抖动样本').value),
+      调度方: document.getElementById('调度方').value,
+    });
+    消息.textContent = out.文案 + '；本次钳住后 ' + out.等待毫秒 + 'ms';
+    await 刷排程();
+  } catch (e) { 消息.textContent = e.message; }
+};
+
+async function 刷排程() {
+  const rep = await 投递台.getJSON('/api/重试排程');
+  const tb = document.getElementById('排程表'); tb.innerHTML='';
+  for (const r of rep.排程) {
+    const tr = 投递台.行(
+      '<td>'+投递台.安全文本(r.事件号)+'</td><td>'+投递台.安全文本(r.调度方)+'</td><td>'+投递台.安全文本(r.状态)+'</td><td>'+投递台.安全文本(r.原始抖动毫秒)+'ms</td><td>'+投递台.安全文本(r.等待毫秒)+'ms</td><td>'+投递台.安全文本(r.下界毫秒+'-'+r.上界毫秒)+'ms</td><td>'+投递台.安全文本(r.是否钳住?'已钳住':'界内')+'</td><td>'+投递台.安全文本(r.排程版本)+'</td>'
+    );
+    tb.appendChild(tr);
+  }
+}
+刷表(); 刷排程();
 </script>
 
 </body>
